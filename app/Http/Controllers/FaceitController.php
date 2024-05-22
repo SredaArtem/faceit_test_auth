@@ -22,30 +22,43 @@ class FaceitController extends Controller
         return view('faceit');
     }
 
+    public static function generateCodeVerifier(): string
+    {
+        return rtrim(strtr(base64_encode(random_bytes(64)), '+/', '-_'), '=');
+    }
+
+    public static function generateCodeChallenge($codeVerifier): string
+    {
+        $codeChallengeMethod = 'sha256';
+        return rtrim(strtr(base64_encode(hash($codeChallengeMethod, $codeVerifier, true)), '+/', '-_'), '=');
+    }
+
     public function redirectToProvider()
     {
-        $hash = base64_encode(hash('sha256', config('faceit.code_verifier')));
-        session()->put('code_verifier', $hash);
-        Log::info('code_verifier: ' . $hash);
+        $hash = config('faceit.code_verifier');
+        $verifier = self::generateCodeVerifier();
+        $codeChallange = $this->generateCodeChallenge($verifier);
+        session()->put('code_verifier', $verifier);
+        Log::info('code_verifier: '.$hash);
 
 
         $query = http_build_query([
             'client_id' => config('faceit.client_id'),
             'redirect_uri' => config('faceit.redirect_uri'),
             'response_type' => 'code',
-            'scope' => 'openid profile email',
+            'scope' => 'openid profile',
             'redirect_popup' => true,
             'debug' => true,
-            'code_challenge_method' => 'SHA-256',
-            'code_challenge' => $hash
+            'code_challenge_method' => 'S256',
+            'code_challenge' => $codeChallange
         ]);
 
-        return redirect('https://accounts.faceit.com/?' . $query);
+        return redirect('https://accounts.faceit.com/?'.$query);
     }
 
     public function handleProviderCallback(Request $request)
     {
-        Log::info('Callback request: ' . json_encode($request->all()));
+        Log::info('Callback request: '.json_encode($request->all()));
 
         //$http = new Client();
 
@@ -54,7 +67,7 @@ class FaceitController extends Controller
         $redirect_uri = config('faceit.redirect_uri');
         $code_challenge = '47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU';
 
-        $credentials = base64_encode($client_id) . ':' . base64_encode($client_secret);
+        $credentials = base64_encode($client_id.':'.$client_secret);
         //Log::debug('Faceit credentials: ' . $credentials);
 
         $client = new Client();
@@ -98,12 +111,12 @@ class FaceitController extends Controller
 
         $code = $request->get('code');
         $code_verifier = session()->get('code_verifier');
-        Log::info('code_verifier2: ' . $code_verifier);
+        Log::info('code_verifier2: '.$code_verifier);
 
         //dd(strlen(config('faceit.code_verifier')));
         $data = [
             'headers' => [
-                'Authorization' => 'Basic ' . $credentials,
+                'Authorization' => 'Basic '.$credentials,
                 'Content-Type' => 'application/x-www-form-urlencoded',
             ],
             'form_params' => [
@@ -114,8 +127,8 @@ class FaceitController extends Controller
                 //'redirect_uri' => $redirect_uri,
                 //'code_verifier' => hash('sha256', config('faceit.code_verifier')),
                 //'code_verifier' => config('faceit.code_verifier'),
-                'code_verifier' => config('faceit.code_verifier'),
-                //'code_verifier' => hash('sha256', base64_encode(config('faceit.code_verifier'))),
+                'code_verifier' => $code_verifier,
+//                'code_verifier' => hash('sha256', config('faceit.code_verifier')),
                 //'debug' => true
             ]
         ];
@@ -123,11 +136,11 @@ class FaceitController extends Controller
         //dd($data);
 
         //try {
-            $response = $client->post("https://api.faceit.com/auth/v1/oauth/token", $data);
+        $response = $client->post("https://api.faceit.com/auth/v1/oauth/token", $data);
 
-            $responseBody = json_decode($response->getBody(), true);
+        $responseBody = json_decode($response->getBody(), true);
 
-            //return response()->json($responseBody);
+        //return response()->json($responseBody);
         /*} catch (Exception $e) {
             // Log the error for debugging
             Log::error('Faceit API error: ' . $e->getMessage());
@@ -142,21 +155,19 @@ class FaceitController extends Controller
 
             //return response()->json(['error' => 'An error occurred'], 500);
         }*/
+        $tokens = json_decode((string) $response->getBody(), true);
 
-        //$tokens = json_decode((string) $response->getBody(), true);
-
-        dd(session()->get('code_verifier'));
-
-        Log::info('Tokens: ' . json_encode($response));
+        dd($tokens);
+        Log::info('Tokens: '.json_encode($response));
         die();
 
         $userResponse = $http->get('https://api.faceit.com/auth/v1/resources/userinfo', [
             'headers' => [
-                'Authorization' => 'Bearer ' . $tokens['access_token'],
+                'Authorization' => 'Bearer '.$tokens['access_token'],
             ],
         ]);
 
-        Log::info('User: ' . json_encode(json_decode((string) $userResponse->getBody(), true)));
+        Log::info('User: '.json_encode(json_decode((string)$userResponse->getBody(), true)));
 
         /*
         $response = $this->getHttpClient()->get('https://api.faceit.com/core/v1/users/me', [
@@ -171,7 +182,7 @@ class FaceitController extends Controller
         return redirect('/');
         die();
 
-        $faceitUser = json_decode((string) $userResponse->getBody(), true);
+        $faceitUser = json_decode((string)$userResponse->getBody(), true);
 
         $user = User::updateOrCreate(
             ['faceit_id' => $faceitUser['guid']],
